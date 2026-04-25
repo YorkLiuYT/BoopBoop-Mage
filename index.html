@@ -152,6 +152,8 @@
     let particles = []; // Explosion particles
     let nextBrickCol = 0; // Next column for new brick spawn
     let frameId = null;
+    let brickMoveProgress = 0; // Animation progress for brick move
+    let ballsInFlight = 0; // Count of balls in flight
 
     // ===== Brick Class =====
     /**
@@ -373,6 +375,13 @@
     }
 
     /**
+     * Calculate Y position for a given brick row
+     */
+    function getBrickY(row) {
+      return row * (BRICK_SIZE + BRICK_GAP);
+    }
+
+    /**
      * Particle class for destruction effects
      */
     class Particle {
@@ -456,6 +465,11 @@
         }
       }
 
+      // Ensure brick Y positions are correct
+      for (const brick of bricks) {
+        brick.y = getBrickY(brick.row);
+      }
+
       render();
     }
 
@@ -483,17 +497,17 @@
         if (brickMoveProgress >= 1) {
           brickMoveProgress = 1;
 
-          // Finalize positions
+          // Finalize positions: move each brick down one row
           for (const brick of bricks) {
             if (!brick.destroyed) {
               brick.row += 1;
-              brick.y = brick.row * (BRICK_SIZE + BRICK_GAP) + (CANVAS_H - GRID_ROWS * (BRICK_SIZE + BRICK_GAP)) / 2 - GRID_ROWS * BRICK_SIZE + 40;
+              brick.y = getBrickY(brick.row);
             }
           }
 
           brickMoveAnimating = false;
 
-          // Check game over
+          // Check game over: any brick reached danger zone
           for (const brick of bricks) {
             if (!brick.destroyed && brick.y + brick.height >= CANVAS_H - 20) {
               gameOverScore.textContent = `Round: ${round} | Score: ${score}`;
@@ -511,10 +525,13 @@
         }
 
         // Interpolate brick positions during animation
+        // Start at current row Y, move toward (row+1) Y
+        const brickMoveOffset = brickMoveProgress * (BRICK_SIZE + BRICK_GAP);
         for (const brick of bricks) {
           if (!brick.destroyed) {
-            const targetY = brick.y - brickMoveProgress * (BRICK_SIZE + BRICK_GAP);
-            brick.y = brick.y - brickMoveProgress * (BRICK_SIZE + BRICK_GAP);
+            const oldY = getBrickY(brick.row);
+            const newY = getBrickY(brick.row + 1);
+            brick.y = oldY + (newY - oldY) * brickMoveProgress;
           }
         }
 
@@ -566,10 +583,17 @@
     function launchBalls() {
       ballsLaunched = 0;
       ballsInFlight = BALLS_PER_SHOT;
-      const angle = Math.atan2(dragEndY - dragStartY, dragEndX - dragStartX);
+      const dy = dragStartY - dragEndY; // positive = dragging upward
+      const dx = dragEndX - dragStartX;
 
       // Only fire when dragging upward
-      if (dragEndY >= dragStartY) return; // Only fire when dragging upward\n      const clampedAngle = angle;
+      if (dy <= 0) return;
+
+      let angle = Math.atan2(-(dragStartY - dragEndY), dragEndX - dragStartX);
+      // Clamp angle to upward fan: -PI*0.95 ~ -PI*0.05 (i.e., roughly 9° left-of-vertical to 9° right-of-vertical, pointing up)
+      const minAngle = -Math.PI * 0.95;
+      const maxAngle = -Math.PI * 0.05;
+      const clampedAngle = Math.max(minAngle, Math.min(maxAngle, angle));
 
       ballLaunchTimer = setInterval(() => {
         if (ballsLaunched >= BALLS_PER_SHOT) {
@@ -604,13 +628,18 @@
     function drawTrajectory() {
       if (!isDragging) return;
 
+      const dy = dragStartY - dragEndY; // positive = upward drag
       const dx = dragEndX - dragStartX;
-      const dy = dragEndY - dragStartY;
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance < 5) return; // Too short
 
-      const angle = Math.atan2(dy, dx);
-      if (dragEndY >= dragStartY) return; // Only fire when dragging upward\n      const clampedAngle = angle;
+      // Only show trajectory when dragging upward
+      if (dy <= 0) return;
+
+      let angle = Math.atan2(-(dragStartY - dragEndY), dragEndX - dragStartX);
+      const minAngle = -Math.PI * 0.95;
+      const maxAngle = -Math.PI * 0.05;
+      const clampedAngle = Math.max(minAngle, Math.min(maxAngle, angle));
 
       ctx.save();
       ctx.setLineDash([8, 8]);
