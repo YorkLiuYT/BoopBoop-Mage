@@ -40,7 +40,7 @@
       display: none;
       justify-content: center;
       align-items: center;
-      background: rgba(0, 0, 0, 0.75);
+      background: rgba(0, 0, 0, 0.8);
       border-radius: 8px;
       z-index: 10;
       flex-direction: column;
@@ -80,6 +80,73 @@
       transform: scale(1.05);
       box-shadow: 0 6px 30px rgba(102, 126, 234, 0.6);
     }
+
+    /* ===== Roguelite Skill Card Overlay ===== */
+    #skillOverlay {
+      background: rgba(0, 0, 0, 0.85);
+    }
+
+    #skillOverlay h2 {
+      color: #e0c3fc;
+      font-size: 28px;
+      margin-bottom: 8px;
+      text-shadow: 0 0 15px rgba(200, 130, 255, 0.7);
+    }
+
+    #skillOverlay .subtitle {
+      color: #aaa;
+      font-size: 14px;
+      margin-bottom: 24px;
+    }
+
+    .skill-card-container {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .skill-card {
+      width: 100px;
+      padding: 12px 8px;
+      background: linear-gradient(160deg, #1e1e3a 0%, #2a2a4a 100%);
+      border: 2px solid #5a4fcf;
+      border-radius: 12px;
+      color: #ddd;
+      font-size: 12px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      box-shadow: 0 0 12px rgba(90, 79, 207, 0.3);
+      user-select: none;
+    }
+
+    .skill-card:hover {
+      transform: translateY(-6px);
+      border-color: #c084fc;
+      box-shadow: 0 0 24px rgba(192, 132, 252, 0.6);
+      background: linear-gradient(160deg, #2a2a50 0%, #3a3a60 100%);
+    }
+
+    .skill-card .icon {
+      font-size: 32px;
+      display: block;
+      margin-bottom: 6px;
+    }
+
+    .skill-card .name {
+      font-weight: 700;
+      font-size: 13px;
+      color: #e0c3fc;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .skill-card .desc {
+      font-size: 11px;
+      color: #aaa;
+      line-height: 1.3;
+    }
   </style>
 </head>
 <body>
@@ -97,12 +164,23 @@
       <p id="winScore">All Clear!</p>
       <button id="playAgainBtn">Play Again</button>
     </div>
+    <!-- Roguelite Skill Card Overlay -->
+    <div class="overlay" id="skillOverlay">
+      <h2>✨ 技能覺醒 ✨</h2>
+      <p class="subtitle">選擇一個技能來強化你的魔法</p>
+      <div class="skill-card-container" id="skillCards"></div>
+    </div>
   </div>
 
   <script>
     /**
-     * Boop Boop Mage - A PunBall-style brick breaker game
+     * Boop Boop Mage - PunBall-style brick breaker
      * Canvas: 400x600 | Deep gray background
+     *
+     * Features:
+     * - Sub-stepping collision (prevents tunneling)
+     * - 4 ball types: normal, pierce, explosive, split
+     * - Roguelite skill cards every 3 rounds
      */
 
     // ===== Configuration =====
@@ -114,10 +192,8 @@
     const BRICK_GAP = 4;
     const BALL_RADIUS = 8;
     const BALL_SPEED = 6;
-    const BALLS_PER_SHOT = 10;
     const BALL_SHOT_INTERVAL = 100; // ms between each ball
-    const BRICK_ROWS_TOP = 3; // Number of rows at top where new bricks spawn
-    const BRICK_MOVE_SPEED = 300; // ms per row move
+    const BRICK_ROWS_TOP = 3;
     const INITIAL_BRICK_HP = 3;
     const MAX_BRICK_HP = 99;
 
@@ -127,6 +203,8 @@
     const wrapper = document.getElementById('gameWrapper');
     const gameOverOverlay = document.getElementById('gameOverOverlay');
     const winOverlay = document.getElementById('winOverlay');
+    const skillOverlay = document.getElementById('skillOverlay');
+    const skillCardsContainer = document.getElementById('skillCards');
     const gameOverScore = document.getElementById('gameOverScore');
     const winScore = document.getElementById('winScore');
     const restartBtn = document.getElementById('restartBtn');
@@ -139,48 +217,52 @@
     let round = 1;
     let playerX = CANVAS_W / 2;
     let playerY = CANVAS_H - 50;
+    let playerDamage = 1; // 基礎攻擊力 (可被技能提升)
+
+    // Drag / aim state
     let isDragging = false;
     let dragStartX = 0;
     let dragStartY = 0;
     let dragEndX = 0;
     let dragEndY = 0;
+
+    // Ball launch state
     let ballLaunchTimer = null;
     let ballsLaunched = 0;
-    let isAiming = false;
+
+    // Round / game flow
     let gameOver = false;
     let brickMoveAnimating = false;
-    let particles = []; // Explosion particles
-    let nextBrickCol = 0; // Next column for new brick spawn
+    let brickMoveProgress = 0;
+
+    // Effects
+    let particles = [];
+    let explosionEffects = []; // For explosive AoE flash
+
+    // Player deck (roguelite)
+    let playerDeck = [];
+
+    // Animation loop
     let frameId = null;
-    let brickMoveProgress = 0; // Animation progress for brick move
-    let ballsInFlight = 0; // Count of balls in flight
+
+    // Pending round-end callback (used by skill overlay)
+    let pendingOnRoundEnd = false;
 
     // ===== Brick Class =====
-    /**
-     * Represents a brick (enemy) on the board
-     */
     class Brick {
-      /**
-       * @param {number} col - Grid column (0-indexed)
-       * @param {number} row - Grid row from top (0-indexed)
-       * @param {number} hp - Hit points
-       */
       constructor(col, row, hp) {
         this.col = col;
         this.row = row;
         this.hp = hp;
         this.maxHp = hp;
         this.x = col * (BRICK_SIZE + BRICK_GAP) + (CANVAS_W - GRID_COLS * (BRICK_SIZE + BRICK_GAP)) / 2;
-        this.y = row * (BRICK_SIZE + BRICK_GAP);
+        this.y = getBrickY(row);
         this.width = BRICK_SIZE;
         this.height = BRICK_SIZE;
-        // Color based on HP tier
+        this.destroyed = false;
         this.color = this.getBrickColor();
       }
 
-      /**
-       * Get color based on HP tier
-       */
       getBrickColor() {
         const tiers = [
           { max: 3, top: '#4a90d9', bottom: '#357abd' },
@@ -196,10 +278,6 @@
         return tiers[tiers.length - 1];
       }
 
-      /**
-       * Damage the brick
-       * @returns {boolean} Whether brick is destroyed
-       */
       damage() {
         this.hp--;
         if (this.hp <= 0) {
@@ -210,30 +288,23 @@
         return false;
       }
 
-      /**
-       * Draw the brick
-       */
       draw() {
         const gradient = ctx.createLinearGradient(this.x, this.y, this.x, this.y + this.height);
         gradient.addColorStop(0, this.color.top);
         gradient.addColorStop(1, this.color.bottom);
 
-        // Shadow
         ctx.shadowColor = 'rgba(0,0,0,0.3)';
         ctx.shadowBlur = 6;
         ctx.shadowOffsetY = 3;
 
-        // Brick body
         ctx.fillStyle = gradient;
         roundRect(ctx, this.x, this.y, this.width, this.height, 6);
         ctx.fill();
 
-        // Reset shadow
         ctx.shadowColor = 'transparent';
         ctx.shadowBlur = 0;
         ctx.shadowOffsetY = 0;
 
-        // HP text
         ctx.fillStyle = '#fff';
         ctx.font = 'bold 24px Arial';
         ctx.textAlign = 'center';
@@ -242,62 +313,69 @@
       }
     }
 
-    /**
-     * Ball class
-     */
+    // ===== Ball Class =====
     class Ball {
       /**
        * @param {number} x - Starting X
        * @param {number} y - Starting Y
        * @param {number} angle - Launch angle in radians
+       * @param {string} type - Ball type: 'normal' | 'pierce' | 'explosive' | 'split'
        */
-      constructor(x, y, angle) {
+      constructor(x, y, angle, type) {
         this.x = x;
         this.y = y;
         this.vx = Math.cos(angle) * BALL_SPEED;
         this.vy = Math.sin(angle) * BALL_SPEED;
         this.radius = BALL_RADIUS;
         this.alive = true;
+        this.type = type || 'normal';
       }
 
       /**
-       * Update ball position
+       * Update ball position with sub-stepping (3 steps per frame)
+       * to prevent tunneling through bricks.
        */
       update() {
-        this.x += this.vx;
-        this.y += this.vy;
+        const steps = 3;
+        const stepVx = this.vx / steps;
+        const stepVy = this.vy / steps;
 
-        // Wall bounce (left, right, top)
-        if (this.x - this.radius <= 0) {
-          this.x = this.radius;
-          this.vx = Math.abs(this.vx);
-        }
-        if (this.x + this.radius >= CANVAS_W) {
-          this.x = CANVAS_W - this.radius;
-          this.vx = -Math.abs(this.vx);
-        }
-        if (this.y - this.radius <= 0) {
-          this.y = this.radius;
-          this.vy = Math.abs(this.vy);
-        }
+        for (let s = 0; s < steps; s++) {
+          if (!this.alive) break;
 
-        // Ball removed at bottom
-        if (this.y - this.radius >= CANVAS_H) {
-          this.alive = false;
-        }
+          this.x += stepVx;
+          this.y += stepVy;
 
-        // Brick collision
-        for (const brick of bricks) {
-          if (brick.destroyed) continue;
-          if (this.collidesWithBrick(brick)) {
-            this.resolveBrickCollision(brick);
+          // Wall bounce (left, right, top)
+          if (this.x - this.radius <= 0) {
+            this.x = this.radius;
+            this.vx = Math.abs(this.vx);
+          } else if (this.x + this.radius >= CANVAS_W) {
+            this.x = CANVAS_W - this.radius;
+            this.vx = -Math.abs(this.vx);
+          }
+          if (this.y - this.radius <= 0) {
+            this.y = this.radius;
+            this.vy = Math.abs(this.vy);
+          }
+
+          // Off-screen at bottom
+          if (this.y - this.radius >= CANVAS_H) {
+            this.alive = false;
+            break;
+          }
+
+          // Brick collision
+          for (const brick of bricks) {
+            if (brick.destroyed) continue;
+            if (this.collidesWithBrick(brick)) {
+              this.resolveBrickCollision(brick);
+              break; // One collision per sub-step
+            }
           }
         }
       }
 
-      /**
-       * Check collision between ball and brick
-       */
       collidesWithBrick(brick) {
         const closestX = Math.max(brick.x, Math.min(this.x, brick.x + brick.width));
         const closestY = Math.max(brick.y, Math.min(this.y, brick.y + brick.height));
@@ -307,52 +385,88 @@
       }
 
       /**
-       * Resolve collision by determining which face was hit
+       * Resolve collision: determine hit face, bounce, apply damage.
+       * Special ball types trigger additional effects here.
        */
       resolveBrickCollision(brick) {
-        // Determine which side was hit by checking overlap amounts
         const ballCenterX = this.x;
         const ballCenterY = this.y;
-        const brickCenterX = brick.x + brick.width / 2;
-        const brickCenterY = brick.y + brick.height / 2;
 
-        // Calculate the center-to-center distances
-        const overlapLeft = ballCenterX - (brick.x - brick.width / 2);
-        const overlapRight = (brick.x + brick.width / 2) - ballCenterX;
-        const overlapTop = ballCenterY - (brick.y - brick.height / 2);
-        const overlapBottom = (brick.y + brick.height / 2) - ballCenterY;
+        // Overlap amounts on each side
+        const overlapLeft = ballCenterX - (brick.x - this.radius);
+        const overlapRight = (brick.x + brick.width + this.radius) - ballCenterX;
+        const overlapTop = ballCenterY - (brick.y - this.radius);
+        const overlapBottom = (brick.y + brick.height + this.radius) - ballCenterY;
 
-        // Find minimum overlap direction
         const minOverlapX = Math.min(overlapLeft, overlapRight);
         const minOverlapY = Math.min(overlapTop, overlapBottom);
 
-        if (minOverlapX < minOverlapY) {
-          // Hit from left or right
-          this.vx = -this.vx;
-          if (overlapLeft < overlapRight) {
-            this.x = brick.x - this.radius - 1;
+        // Pierce: do NOT bounce, go straight through
+        if (this.type === 'pierce') {
+          // Just push the ball slightly past the brick to keep moving
+          if (minOverlapX < minOverlapY) {
+            if (overlapLeft < overlapRight) {
+              this.x = brick.x + brick.width + this.radius;
+            } else {
+              this.x = brick.x - this.radius;
+            }
           } else {
-            this.x = brick.x + brick.width + this.radius + 1;
+            if (overlapTop < overlapBottom) {
+              this.y = brick.y + brick.height + this.radius;
+            } else {
+              this.y = brick.y - this.radius;
+            }
           }
         } else {
-          // Hit from top or bottom
-          this.vy = -this.vy;
-          if (overlapTop < overlapBottom) {
-            this.y = brick.y - this.radius - 1;
+          // Normal bounce for everything else
+          if (minOverlapX < minOverlapY) {
+            this.vx = -this.vx;
+            this.x += Math.sign(this.vx) * 2;
           } else {
-            this.y = brick.y + brick.height + this.radius + 1;
+            this.vy = -this.vy;
+            this.y += Math.sign(this.vy) * 2;
           }
         }
 
-        // Damage brick
-        brick.damage();
+        // Apply damage (playerDamage times)
+        for (let i = 0; i < playerDamage; i++) {
+          if (!brick.destroyed) brick.damage();
+        }
         score += 10;
+
+        // --- Special type effects ---
+
+        // Explosive: AoE 3x3 damage
+        if (this.type === 'explosive') {
+          triggerExplosion(brick);
+        }
+
+        // Split: spawn 2 normal balls at ±30 degrees, then become normal
+        if (this.type === 'split') {
+          triggerSplit(this);
+        }
       }
 
-      /**
-       * Draw the ball
-       */
       draw() {
+        let baseColor, glowColor;
+        switch (this.type) {
+          case 'pierce':
+            baseColor = '#fbbf24';
+            glowColor = '#f59e0b';
+            break;
+          case 'explosive':
+            baseColor = '#ef4444';
+            glowColor = '#dc2626';
+            break;
+          case 'split':
+            baseColor = '#a78bfa';
+            glowColor = '#8b5cf6';
+            break;
+          default: // normal
+            baseColor = '#3b82f6';
+            glowColor = '#3b82f6';
+        }
+
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
         const gradient = ctx.createRadialGradient(
@@ -360,13 +474,12 @@
           this.x, this.y, this.radius
         );
         gradient.addColorStop(0, '#ffffff');
-        gradient.addColorStop(0.5, '#7dd3fc');
-        gradient.addColorStop(1, '#3b82f6');
+        gradient.addColorStop(0.5, baseColor);
+        gradient.addColorStop(1, glowColor);
         ctx.fillStyle = gradient;
         ctx.fill();
 
-        // Glow effect
-        ctx.shadowColor = '#3b82f6';
+        ctx.shadowColor = glowColor;
         ctx.shadowBlur = 10;
         ctx.fill();
         ctx.shadowColor = 'transparent';
@@ -374,16 +487,12 @@
       }
     }
 
-    /**
-     * Calculate Y position for a given brick row
-     */
+    // ===== Utility: Brick Y position =====
     function getBrickY(row) {
       return row * (BRICK_SIZE + BRICK_GAP);
     }
 
-    /**
-     * Particle class for destruction effects
-     */
+    // ===== Particle System =====
     class Particle {
       constructor(x, y, color) {
         this.x = x;
@@ -399,7 +508,7 @@
       update() {
         this.x += this.vx;
         this.y += this.vy;
-        this.vy += 0.1; // gravity
+        this.vy += 0.1;
         this.life -= this.decay;
       }
 
@@ -411,18 +520,94 @@
       }
     }
 
-    /**
-     * Spawn explosion particles
-     */
     function spawnParticles(x, y, color) {
       for (let i = 0; i < 12; i++) {
         particles.push(new Particle(x, y, color));
       }
     }
 
-    /**
-     * Draw rounded rectangle
-     */
+    // ===== Explosion Effect (explosive AoE flash) =====
+    class ExplosionEffect {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 5;
+        this.maxRadius = 60;
+        this.life = 1.0;
+        this.decay = 0.06;
+      }
+
+      update() {
+        this.radius += (this.maxRadius - this.radius) * 0.15;
+        this.life -= this.decay;
+      }
+
+      draw() {
+        if (this.life <= 0) return;
+        ctx.globalAlpha = this.life * 0.5;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ff4444';
+        ctx.fill();
+
+        ctx.globalAlpha = this.life * 0.3;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius * 0.7, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffaa44';
+        ctx.fill();
+
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ===== Explosive AoE Damage =====
+    function triggerExplosion(centerBrick) {
+      const cx = centerBrick.x + centerBrick.width / 2;
+      const cy = centerBrick.y + centerBrick.height / 2;
+
+      // Visual flash
+      explosionEffects.push(new ExplosionEffect(cx, cy));
+
+      // Damage all bricks within 3x3 grid area (approx. 130px radius)
+      const range = BRICK_SIZE * 1.8;
+      for (const brick of bricks) {
+        if (brick.destroyed || brick === centerBrick) continue;
+        const dx = (brick.x + brick.width / 2) - cx;
+        const dy = (brick.y + brick.height / 2) - cy;
+        if (Math.sqrt(dx * dx + dy * dy) <= range) {
+          brick.damage();
+          score += 5;
+        }
+      }
+    }
+
+    // ===== Split Effect =====
+    function triggerSplit(originalBall) {
+      // Rotate velocity vector by ±30 degrees
+      const angle = Math.atan2(originalBall.vy, originalBall.vx);
+      const deg30 = Math.PI / 6;
+
+      // Left split
+      const leftAngle = angle - deg30;
+      const leftBall = new Ball(
+        originalBall.x, originalBall.y,
+        leftAngle, 'normal'
+      );
+      balls.push(leftBall);
+
+      // Right split
+      const rightAngle = angle + deg30;
+      const rightBall = new Ball(
+        originalBall.x, originalBall.y,
+        rightAngle, 'normal'
+      );
+      balls.push(rightBall);
+
+      // Prevent infinite splits
+      originalBall.type = 'normal';
+    }
+
+    // ===== Rounded Rectangle =====
     function roundRect(ctx, x, y, w, h, r) {
       ctx.beginPath();
       ctx.moveTo(x + r, y);
@@ -437,48 +622,126 @@
       ctx.closePath();
     }
 
-    // ===== Game Functions =====
+    // ===== Roguelite: Skill Definitions =====
+    const ALL_SKILLS = [
+      {
+        id: 'mana_flood',
+        icon: '🔮',
+        name: '魔力湧現',
+        desc: '牌組加入 2 顆普通球',
+        apply() { playerDeck.push('normal', 'normal'); }
+      },
+      {
+        id: 'get_pierce',
+        icon: '🗡️',
+        name: '獲得穿透彈',
+        desc: '牌組加入 1 顆穿透彈',
+        apply() { playerDeck.push('pierce'); }
+      },
+      {
+        id: 'get_explosive',
+        icon: '💣',
+        name: '獲得爆風彈',
+        desc: '牌組加入 1 顆爆風彈',
+        apply() { playerDeck.push('explosive'); }
+      },
+      {
+        id: 'get_split',
+        icon: '✂️',
+        name: '獲得分裂彈',
+        desc: '牌組加入 1 顆分裂彈',
+        apply() { playerDeck.push('split'); }
+      },
+      {
+        id: 'attack_up',
+        icon: '⚔️',
+        name: '攻擊強化',
+        desc: '所有球基礎傷害 +1',
+        apply() { playerDamage++; }
+      },
+      {
+        id: 'retreat',
+        icon: '🛡️',
+        name: '緩兵之計',
+        desc: '所有磚塊往上退 1 格',
+        apply() {
+          for (const brick of bricks) {
+            if (!brick.destroyed && brick.row > 0) {
+              brick.row -= 1;
+              brick.y = getBrickY(brick.row);
+            }
+          }
+        }
+      }
+    ];
 
     /**
-     * Initialize a new game
+     * Pick 3 random non-duplicate skills and show the overlay.
+     * Blocks game loop until player chooses.
      */
+    function showSkillSelection(callback) {
+      // Shuffle and pick 3
+      const shuffled = [...ALL_SKILLS].sort(() => Math.random() - 0.5);
+      const chosen = shuffled.slice(0, 3);
+
+      skillCardsContainer.innerHTML = '';
+      for (const skill of chosen) {
+        const card = document.createElement('div');
+        card.className = 'skill-card';
+        card.innerHTML = `
+          <span class="icon">${skill.icon}</span>
+          <span class="name">${skill.name}</span>
+          <span class="desc">${skill.desc}</span>
+        `;
+        card.addEventListener('click', () => {
+          skill.apply();
+          skillOverlay.classList.remove('active');
+          if (callback) callback();
+        });
+        skillCardsContainer.appendChild(card);
+      }
+
+      skillOverlay.classList.add('active');
+    }
+
+    // ===== Game Initialization =====
     function initGame() {
       bricks = [];
       balls = [];
       particles = [];
+      explosionEffects = [];
       score = 0;
       round = 1;
       gameOver = false;
       isDragging = false;
-      isAiming = false;
       brickMoveAnimating = false;
+      brickMoveProgress = 0;
+      playerDamage = 1;
+      pendingOnRoundEnd = false;
+
+      // Default deck: 5 normal balls
+      playerDeck = ['normal', 'normal', 'normal', 'normal', 'normal'];
+
       gameOverOverlay.classList.remove('active');
       winOverlay.classList.remove('active');
-      nextBrickCol = 0;
+      skillOverlay.classList.remove('active');
 
       // Spawn initial brick layout: 5 rows at top
       for (let row = 0; row < 5; row++) {
         for (let col = 0; col < GRID_COLS; col++) {
-          // Skip random bricks for variety
           if (Math.random() < 0.15) continue;
           bricks.push(new Brick(col, row, INITIAL_BRICK_HP));
         }
       }
 
-      // Ensure brick Y positions are correct
-      for (const brick of bricks) {
-        brick.y = getBrickY(brick.row);
-      }
-
       render();
     }
 
-    /**
-     * End of round logic
-     */
+    // ===== Round End Logic =====
     function onRoundEnd() {
-      // Check win condition: no bricks left
       const aliveBricks = bricks.filter(b => !b.destroyed);
+
+      // Win check
       if (aliveBricks.length === 0) {
         winScore.textContent = `Score: ${score} | All Clear!`;
         winOverlay.classList.add('active');
@@ -486,18 +749,35 @@
         return;
       }
 
-      // Move all bricks down one row
+      // Roguelite: every 3 rounds, show skill selection BEFORE bricks move down
+      if (round % 3 === 0) {
+        showSkillSelection(() => {
+          // After skill chosen, continue with brick move down
+          performBrickMoveDown();
+        });
+        return;
+      }
+
+      // Normal flow: just move bricks down
+      performBrickMoveDown();
+    }
+
+    /**
+     * Animate bricks moving down one row, then spawn new bricks.
+     */
+    function performBrickMoveDown() {
+      const aliveBricks = bricks.filter(b => !b.destroyed);
+      if (aliveBricks.length === 0) return;
+
       brickMoveAnimating = true;
       brickMoveProgress = 0;
-      const aliveCount = aliveBricks.length;
 
-      // Animate brick movement
       const animateMove = () => {
         brickMoveProgress += 0.05;
         if (brickMoveProgress >= 1) {
           brickMoveProgress = 1;
 
-          // Finalize positions: move each brick down one row
+          // Finalize: move each brick down one row
           for (const brick of bricks) {
             if (!brick.destroyed) {
               brick.row += 1;
@@ -507,7 +787,7 @@
 
           brickMoveAnimating = false;
 
-          // Check game over: any brick reached danger zone
+          // Game over check
           for (const brick of bricks) {
             if (!brick.destroyed && brick.y + brick.height >= CANVAS_H - 20) {
               gameOverScore.textContent = `Round: ${round} | Score: ${score}`;
@@ -517,16 +797,14 @@
             }
           }
 
-          // Spawn new bricks at top
+          // Spawn new bricks & advance round
           spawnNewBricks();
           round++;
           render();
           return;
         }
 
-        // Interpolate brick positions during animation
-        // Start at current row Y, move toward (row+1) Y
-        const brickMoveOffset = brickMoveProgress * (BRICK_SIZE + BRICK_GAP);
+        // Interpolate
         for (const brick of bricks) {
           if (!brick.destroyed) {
             const oldY = getBrickY(brick.row);
@@ -544,9 +822,7 @@
       animateMove();
     }
 
-    /**
-     * Spawn new bricks at the top rows
-     */
+    // ===== Spawn New Bricks =====
     function spawnNewBricks() {
       const count = 1 + Math.floor(Math.random() * 3); // 1 to 3
       const availableCols = [];
@@ -554,7 +830,7 @@
         availableCols.push(c);
       }
 
-      // Shuffle and pick cols
+      // Fisher-Yates shuffle
       for (let i = availableCols.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
         [availableCols[i], availableCols[j]] = [availableCols[j], availableCols[i]];
@@ -563,56 +839,47 @@
       const spawnRow = 0;
       for (let i = 0; i < Math.min(count, availableCols.length); i++) {
         const col = availableCols[i];
-        // Check if position is occupied
         const occupied = bricks.some(b =>
           !b.destroyed && b.col === col && b.row === spawnRow
         );
         if (!occupied) {
           const newHp = Math.min(round, MAX_BRICK_HP);
           const brick = new Brick(col, spawnRow, newHp);
-          // Start from one row above (animate in)
-          brick.y -= (BRICK_SIZE + BRICK_GAP);
+          brick.y -= (BRICK_SIZE + BRICK_GAP); // Start above visible area
           bricks.push(brick);
         }
       }
     }
 
-    /**
-     * Launch balls from the player position
-     */
+    // ===== Launch Balls from Deck =====
     function launchBalls() {
       ballsLaunched = 0;
-      ballsInFlight = BALLS_PER_SHOT;
       const dy = dragStartY - dragEndY; // positive = dragging upward
-      const dx = dragEndX - dragStartX;
-
-      // Only fire when dragging upward
       if (dy <= 0) return;
 
       let angle = Math.atan2(-(dragStartY - dragEndY), dragEndX - dragStartX);
-      // Clamp angle to upward fan: -PI*0.95 ~ -PI*0.05 (i.e., roughly 9° left-of-vertical to 9° right-of-vertical, pointing up)
       const minAngle = -Math.PI * 0.95;
       const maxAngle = -Math.PI * 0.05;
       const clampedAngle = Math.max(minAngle, Math.min(maxAngle, angle));
 
+      const deckLength = playerDeck.length;
+
       ballLaunchTimer = setInterval(() => {
-        if (ballsLaunched >= BALLS_PER_SHOT) {
+        if (ballsLaunched >= deckLength) {
           clearInterval(ballLaunchTimer);
           ballLaunchTimer = null;
           return;
         }
 
-        // Slight spread between balls
-        const spread = (ballsLaunched - (BALLS_PER_SHOT - 1) / 2) * 0.02;
+        const ballType = playerDeck[ballsLaunched];
+        const spread = (ballsLaunched - (deckLength - 1) / 2) * 0.02;
         const launchAngle = clampedAngle + spread;
-        balls.push(new Ball(playerX, playerY, launchAngle));
+        balls.push(new Ball(playerX, playerY, launchAngle, ballType));
         ballsLaunched++;
       }, BALL_SHOT_INTERVAL);
     }
 
-    /**
-     * Check if all balls are off-screen (hit bottom)
-     */
+    // ===== Check Round End =====
     function checkRoundEnd() {
       if (balls.length > 0 && balls.every(b => !b.alive)) {
         balls = [];
@@ -622,19 +889,14 @@
       }
     }
 
-    /**
-     * Draw the aiming trajectory
-     */
+    // ===== Draw Trajectory =====
     function drawTrajectory() {
       if (!isDragging) return;
 
-      const dy = dragStartY - dragEndY; // positive = upward drag
+      const dy = dragStartY - dragEndY;
       const dx = dragEndX - dragStartX;
       const distance = Math.sqrt(dx * dx + dy * dy);
-      if (distance < 5) return; // Too short
-
-      // Only show trajectory when dragging upward
-      if (dy <= 0) return;
+      if (distance < 5 || dy <= 0) return;
 
       let angle = Math.atan2(-(dragStartY - dragEndY), dragEndX - dragStartX);
       const minAngle = -Math.PI * 0.95;
@@ -648,7 +910,6 @@
       ctx.beginPath();
       ctx.moveTo(playerX, playerY);
 
-      // Draw trajectory line (length proportional to drag distance, capped)
       const lineLen = Math.min(distance, 200);
       ctx.lineTo(
         playerX + Math.cos(clampedAngle) * lineLen,
@@ -656,7 +917,6 @@
       );
       ctx.stroke();
 
-      // Draw angle indicator (arrow)
       const arrowLen = 15;
       const arrowAngle = 0.4;
       const tipX = playerX + Math.cos(clampedAngle) * lineLen;
@@ -679,14 +939,11 @@
       ctx.restore();
     }
 
-    /**
-     * Draw the player character
-     */
+    // ===== Draw Player =====
     function drawPlayer() {
       const px = playerX;
       const py = playerY;
 
-      // Player body (circle)
       ctx.beginPath();
       ctx.arc(px, py, 20, 0, Math.PI * 2);
       const gradient = ctx.createRadialGradient(px, py, 0, px, py, 20);
@@ -695,33 +952,53 @@
       ctx.fillStyle = gradient;
       ctx.fill();
 
-      // Player label
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 14px Arial';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText('🧙', px, py);
+
+      // Draw deck preview below player
+      const deckY = py + 30;
+      const ballPreviewSize = 5;
+      const totalDeckWidth = playerDeck.length * (ballPreviewSize * 2 + 4);
+      let startX = px - totalDeckWidth / 2;
+
+      for (let i = 0; i < playerDeck.length; i++) {
+        const type = playerDeck[i];
+        let color;
+        switch (type) {
+          case 'pierce': color = '#fbbf24'; break;
+          case 'explosive': color = '#ef4444'; break;
+          case 'split': color = '#a78bfa'; break;
+          default: color = '#3b82f6';
+        }
+        ctx.beginPath();
+        ctx.arc(startX + i * (ballPreviewSize * 2 + 4) + ballPreviewSize, deckY, ballPreviewSize, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+      }
     }
 
-    /**
-     * Draw the UI (score, round)
-     */
+    // ===== Draw UI =====
     function drawUI() {
-      // Score
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 22px Arial';
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
       ctx.fillText(`Score: ${score}`, 12, 12);
 
-      // Round
       ctx.textAlign = 'right';
       ctx.fillText(`Round ${round}`, CANVAS_W - 12, 12);
+
+      // Attack power display
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 14px Arial';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(`ATK: ${playerDamage}`, CANVAS_W / 2, 12);
     }
 
-    /**
-     * Draw the grid lines (subtle)
-     */
+    // ===== Draw Grid =====
     function drawGrid() {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
       ctx.lineWidth = 1;
@@ -743,9 +1020,7 @@
       }
     }
 
-    /**
-     * Draw the danger zone line at bottom
-     */
+    // ===== Draw Danger Line =====
     function drawDangerLine() {
       ctx.strokeStyle = 'rgba(255, 50, 50, 0.3)';
       ctx.lineWidth = 2;
@@ -757,87 +1032,68 @@
       ctx.setLineDash([]);
     }
 
-    /**
-     * Main render function
-     */
+    // ===== Main Render =====
     function render() {
-      // Clear canvas
       ctx.fillStyle = '#2d2d3f';
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
 
-      // Draw grid
       drawGrid();
-
-      // Draw danger line
       drawDangerLine();
 
-      // Draw bricks
+      // Bricks
       for (const brick of bricks) {
-        if (!brick.destroyed) {
-          brick.draw();
-        }
+        if (!brick.destroyed) brick.draw();
       }
 
-      // Draw player
+      // Player
       drawPlayer();
 
-      // Draw balls
+      // Balls
       for (const ball of balls) {
-        if (ball.alive) {
-          ball.draw();
-        }
+        if (ball.alive) ball.draw();
       }
 
-      // Draw particles
+      // Particles
       for (const p of particles) {
-        if (p.life > 0) {
-          p.draw();
-        }
+        if (p.life > 0) p.draw();
       }
 
-      // Draw trajectory
-      drawTrajectory();
+      // Explosion effects
+      for (const e of explosionEffects) {
+        if (e.life > 0) e.draw();
+      }
 
-      // Draw UI
+      drawTrajectory();
       drawUI();
 
-      // Remove destroyed bricks
+      // Clean up destroyed bricks
       bricks = bricks.filter(b => !b.destroyed);
     }
 
-    /**
-     * Main game loop
-     */
+    // ===== Game Loop =====
     function gameLoop() {
       if (gameOver) return;
 
       // Update balls
       for (const ball of balls) {
-        if (ball.alive) {
-          ball.update();
-        }
+        if (ball.alive) ball.update();
       }
 
-      // Check if round is over
       checkRoundEnd();
 
       // Update particles
       particles = particles.filter(p => p.life > 0);
-      for (const p of particles) {
-        p.update();
-      }
+      for (const p of particles) p.update();
 
-      // Render
+      // Update explosion effects
+      explosionEffects = explosionEffects.filter(e => e.life > 0);
+      for (const e of explosionEffects) e.update();
+
       render();
-
       frameId = requestAnimationFrame(gameLoop);
     }
 
     // ===== Input Handling =====
-
-    /**
-     * Get coordinates relative to canvas
-     */
     function getCanvasPos(e) {
       const rect = canvas.getBoundingClientRect();
       const scaleX = CANVAS_W / rect.width;
@@ -855,9 +1111,6 @@
       };
     }
 
-    /**
-     * Start drag
-     */
     function onPointerDown(e) {
       if (gameOver || brickMoveAnimating) return;
       const pos = getCanvasPos(e);
@@ -868,9 +1121,6 @@
       dragEndY = pos.y;
     }
 
-    /**
-     * Drag move
-     */
     function onPointerMove(e) {
       if (!isDragging) return;
       e.preventDefault();
@@ -879,9 +1129,6 @@
       dragEndY = pos.y;
     }
 
-    /**
-     * End drag - launch balls
-     */
     function onPointerUp(e) {
       if (!isDragging) return;
       isDragging = false;
@@ -895,7 +1142,6 @@
       }
     }
 
-    // Event listeners
     canvas.addEventListener('mousedown', onPointerDown);
     canvas.addEventListener('mousemove', onPointerMove);
     canvas.addEventListener('mouseup', onPointerUp);
@@ -905,20 +1151,22 @@
     canvas.addEventListener('touchmove', onPointerMove, { passive: false });
     canvas.addEventListener('touchend', onPointerUp);
 
-    // Restart buttons
+    // Restart
     restartBtn.addEventListener('click', () => {
       if (frameId) cancelAnimationFrame(frameId);
+      if (ballLaunchTimer) clearInterval(ballLaunchTimer);
       initGame();
       gameLoop();
     });
 
     playAgainBtn.addEventListener('click', () => {
       if (frameId) cancelAnimationFrame(frameId);
+      if (ballLaunchTimer) clearInterval(ballLaunchTimer);
       initGame();
       gameLoop();
     });
 
-    // ===== Start the game =====
+    // ===== Start =====
     initGame();
     gameLoop();
   </script>
