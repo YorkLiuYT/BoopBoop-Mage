@@ -609,7 +609,7 @@
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance < 5) return; // Too short
 
-      const angle = Math.atan2(-dy, dx);
+      const angle = Math.atan2(dy, dx);
       const clampedAngle = Math.max(-Math.PI * 0.95, Math.min(-Math.PI * 0.05, angle));
 
       ctx.save();
