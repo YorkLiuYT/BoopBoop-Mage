@@ -566,10 +566,10 @@
     function launchBalls() {
       ballsLaunched = 0;
       ballsInFlight = BALLS_PER_SHOT;
-      const angle = Math.atan2(-(dragEndY - dragStartY), dragEndX - dragStartX);
+      const angle = Math.atan2(dragEndY - dragStartY, dragEndX - dragStartX);
 
       // Clamp angle to prevent launching downward
-      const clampedAngle = Math.max(Math.PI * 0.05, Math.min(Math.PI * 0.95, angle));
+      const clampedAngle = Math.max(-Math.PI * 0.95, Math.min(-Math.PI * 0.05, angle));
 
       ballLaunchTimer = setInterval(() => {
         if (ballsLaunched >= BALLS_PER_SHOT) {
@@ -610,7 +610,7 @@
       if (distance < 5) return; // Too short
 
       const angle = Math.atan2(-dy, dx);
-      const clampedAngle = Math.max(Math.PI * 0.05, Math.min(Math.PI * 0.95, angle));
+      const clampedAngle = Math.max(-Math.PI * 0.95, Math.min(-Math.PI * 0.05, angle));
 
       ctx.save();
       ctx.setLineDash([8, 8]);
