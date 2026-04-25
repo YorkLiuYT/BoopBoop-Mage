@@ -146,11 +146,9 @@
     let dragEndY = 0;
     let ballLaunchTimer = null;
     let ballsLaunched = 0;
-    let bricksInFlight = 0;
     let isAiming = false;
     let gameOver = false;
     let brickMoveAnimating = false;
-    let brickMoveOffset = 0; // visual offset during brick row transition
     let particles = []; // Explosion particles
     let nextBrickCol = 0; // Next column for new brick spawn
     let frameId = null;
@@ -171,7 +169,7 @@
         this.hp = hp;
         this.maxHp = hp;
         this.x = col * (BRICK_SIZE + BRICK_GAP) + (CANVAS_W - GRID_COLS * (BRICK_SIZE + BRICK_GAP)) / 2;
-        this.y = row * (BRICK_SIZE + BRICK_GAP) + (CANVAS_H - GRID_ROWS * (BRICK_SIZE + BRICK_GAP)) / 2 - GRID_ROWS * BRICK_SIZE + 40;
+        this.y = row * (BRICK_SIZE + BRICK_GAP);
         this.width = BRICK_SIZE;
         this.height = BRICK_SIZE;
         // Color based on HP tier
@@ -568,7 +566,7 @@
     function launchBalls() {
       ballsLaunched = 0;
       ballsInFlight = BALLS_PER_SHOT;
-      const angle = Math.atan2(dragEndY - dragStartY, dragEndX - dragStartX);
+      const angle = Math.atan2(-(dragEndY - dragStartY), dragEndX - dragStartX);
 
       // Clamp angle to prevent launching downward
       const clampedAngle = Math.max(Math.PI * 0.05, Math.min(Math.PI * 0.95, angle));
@@ -611,7 +609,7 @@
       const distance = Math.sqrt(dx * dx + dy * dy);
       if (distance < 5) return; // Too short
 
-      const angle = Math.atan2(dy, dx);
+      const angle = Math.atan2(-dy, dx);
       const clampedAngle = Math.max(Math.PI * 0.05, Math.min(Math.PI * 0.95, angle));
 
       ctx.save();
